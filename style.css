@@ -86,16 +86,16 @@ h2 {
     font-size: 14px;
 }
 
-/* Camera Container */
+/* Camera Container - 30% smaller */
 #cameraContainer {
     position: relative;
-    width: 280px;
+    width: 196px; /* Was 280px, now 70% = 196px */
     margin: 20px auto;
 }
 
 video {
-    width: 280px;
-    height: 280px;
+    width: 196px;
+    height: 196px;
     border-radius: 12px;
     border: 3px solid #2196F3;
     background: #000;
@@ -226,6 +226,29 @@ canvas {
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+/* Next Round Button */
+#nextRoundBtn {
+    padding: 15px 35px;
+    font-size: 18px;
+    background: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    margin: 20px auto;
+    display: block;
+    transition: background 0.3s;
+    font-weight: bold;
+}
+
+#nextRoundBtn:hover {
+    background: #1976D2;
+}
+
+#nextRoundBtn:active {
+    transform: scale(0.98);
 }
 
 /* Mobile Responsive */
