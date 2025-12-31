@@ -335,8 +335,11 @@ function checkAnswer(selectedTool) {
     document.getElementById("score").innerText = score;
     document.getElementById("streak").innerText = streak;
 
-    // Reset after 2 seconds
-    setTimeout(resetRound, 2000);
+    // Show "Next" button instead of auto-advancing
+    const nextBtn = document.getElementById("nextRoundBtn");
+    if (nextBtn) {
+        nextBtn.style.display = "block";
+    }
 }
 
 // Reset for next round
@@ -352,6 +355,13 @@ function resetRound() {
     if (instructionEl) {
         instructionEl.innerText = "Present a dental tool to the camera";
     }
+    
+    // Hide next button
+    const nextBtn = document.getElementById("nextRoundBtn");
+    if (nextBtn) {
+        nextBtn.style.display = "none";
+    }
+    
     updateStabilityBar(0);
 }
 
@@ -395,4 +405,10 @@ document.addEventListener('DOMContentLoaded', function() {
             startGame(level);
         });
     });
+    
+    // Next round button
+    const nextBtn = document.getElementById("nextRoundBtn");
+    if (nextBtn) {
+        nextBtn.addEventListener("click", resetRound);
+    }
 });
