@@ -1,83 +1,94 @@
-console.log("script.js loaded - 13 Class Version");
+console.log("DTR-edu Game loaded");
 
 const modelURL = "./model/model.json";
 const metadataURL = "./model/metadata.json";
 
+// Game state
 let model;
 let video;
 let canvas;
 let ctx;
 let isRunning = false;
 let videoTrack;
-const CONFIDENCE_THRESHOLD = 0.60;
+let currentDifficulty = null;
+let score = 0;
+let streak = 0;
 
-// Tool configuration with all 13 classes
-const toolConfig = {
-    "1-2.L": {
-        diagram: "./mouth-diagrams/1-2.L.png",
-        toolName: "Tool 1-2 (Left)"
-    },
-    "1-2.R": {
-        diagram: "./mouth-diagrams/1-2.R.png",
-        toolName: "Tool 1-2 (Right)"
-    },
-    "7-8.L": {
-        diagram: "./mouth-diagrams/7-8.L.png",
-        toolName: "Tool 7-8 (Left)"
-    },
-    "7-8.R": {
-        diagram: "./mouth-diagrams/7-8.R.png",
-        toolName: "Tool 7-8 (Right)"
-    },
-    "9-10.L": {
-        diagram: "./mouth-diagrams/9-10.L.png",
-        toolName: "Tool 9-10 (Left)"
-    },
-    "9-10.R": {
-        diagram: "./mouth-diagrams/9-10.R.png",
-        toolName: "Tool 9-10 (Right)"
-    },
-    "11-12.L": {
-        diagram: "./mouth-diagrams/11-12.L.png",
-        toolName: "Tool 11-12 (Left)"
-    },
-    "11-12.R": {
-        diagram: "./mouth-diagrams/11-12.R.png",
-        toolName: "Tool 11-12 (Right)"
-    },
-    "13-14.L": {
-        diagram: "./mouth-diagrams/13-14.L.png",
-        toolName: "Tool 13-14 (Left)"
-    },
-    "13-14.R": {
-        diagram: "./mouth-diagrams/13-14.R.png",
-        toolName: "Tool 13-14 (Right)"
-    },
-    "17-18.L": {
-        diagram: "./mouth-diagrams/17-18.L.png",
-        toolName: "Tool 17-18 (Left)"
-    },
-    "17-18.R": {
-        diagram: "./mouth-diagrams/17-18.R.png",
-        toolName: "Tool 17-18 (Right)"
-    },
-    "00-no": {
-        diagram: "",
-        toolName: "No Tool"
-    }
+// Tool detection state
+const TOOLS = ["1-2", "7-8", "9-10", "11-12", "13-14", "17-18"];
+let currentTool = null;
+let correctAnswer = null;
+let detectionBuffer = [];
+const BUFFER_SIZE = 10; // 1.5 seconds of stable detection (150ms * 10)
+const CONFIDENCE_THRESHOLD = 0.70;
+let awaitingAnswer = false;
+
+// Difficulty settings
+const DIFFICULTY_SETTINGS = {
+    easy: { options: 2 },
+    medium: { options: 4 },
+    hard: { options: 6 },
+    expert: { options: 6 }
 };
 
-// Status message helper
+// Simple beep function (no audio files needed)
+function playCorrectSound() {
+    try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (e) {
+        console.log("Audio not available");
+    }
+}
+
+function playWrongSound() {
+    try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 200;
+        oscillator.type = 'sawtooth';
+        
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (e) {
+        console.log("Audio not available");
+    }
+}
+
+// Show status message
 function showStatus(message, isError = false) {
     const statusEl = document.getElementById("statusMessage");
-    statusEl.innerText = message;
-    statusEl.style.color = isError ? "#b00020" : "#333";
+    if (statusEl) {
+        statusEl.innerText = message;
+        statusEl.style.color = isError ? "#b00020" : "#333";
+    }
     console.log(message);
 }
 
-// Load Teachable Machine model
+// Load model
 async function loadModel() {
-    console.log("Loading Teachable Machine model...");
+    console.log("Loading model...");
     
     if (typeof tmImage === 'undefined') {
         throw new Error("Teachable Machine library not loaded");
@@ -87,67 +98,54 @@ async function loadModel() {
     
     try {
         model = await tmImage.load(modelURL, metadataURL);
-        console.log("Model loaded successfully");
-        console.log("Available classes:", model.getClassLabels().join(", "));
-        
-        showStatus("Model loaded! Ready to detect tools.");
+        console.log("Model loaded:", model.getClassLabels().join(", "));
+        showStatus("Model ready!");
         return true;
     } catch (err) {
-        console.error("Model load error:", err);
+        console.error("Model error:", err);
         showStatus("Failed to load model: " + err.message, true);
         throw err;
     }
 }
 
-// Start camera with iOS-compatible settings
+// Start camera
 async function startCamera() {
+    console.log("Starting camera...");
     video = document.getElementById("video");
     canvas = document.getElementById("canvas");
     ctx = canvas.getContext("2d");
 
-    showStatus("Requesting camera access...");
-
     try {
-        const constraints = {
+        const stream = await navigator.mediaDevices.getUserMedia({
             video: {
                 facingMode: { ideal: "environment" },
                 width: { ideal: 224 },
                 height: { ideal: 224 }
             },
             audio: false
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        });
         
         video.srcObject = stream;
         videoTrack = stream.getVideoTracks()[0];
-        
-        showStatus("Camera started!");
 
+        // Try torch
         try {
             const capabilities = videoTrack.getCapabilities();
             if (capabilities.torch) {
-                await videoTrack.applyConstraints({ 
-                    advanced: [{ torch: true }] 
-                });
-                console.log("✓ Torch enabled");
-                showStatus("Camera started with flash!");
+                await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                console.log("Torch enabled");
             }
-        } catch (torchErr) {
+        } catch (e) {
             console.log("Torch not available");
         }
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             video.onloadedmetadata = () => {
-                video.play()
-                    .then(() => {
-                        showStatus("Ready to detect tools!");
-                        resolve();
-                    })
-                    .catch(reject);
+                video.play().then(() => {
+                    console.log("Camera started successfully");
+                    resolve();
+                });
             };
-            
-            setTimeout(() => reject(new Error("Video load timeout")), 10000);
         });
 
     } catch (err) {
@@ -157,7 +155,15 @@ async function startCamera() {
     }
 }
 
-// Prediction loop
+// Update stability bar
+function updateStabilityBar(progress) {
+    const bar = document.getElementById("stabilityProgress");
+    if (bar) {
+        bar.style.width = (progress * 100) + "%";
+    }
+}
+
+// Prediction loop with buffering
 async function predictLoop() {
     if (!isRunning) return;
 
@@ -165,7 +171,6 @@ async function predictLoop() {
         ctx.drawImage(video, 0, 0, 224, 224);
         const prediction = await model.predict(canvas);
 
-        // Find best prediction
         let best = prediction[0];
         for (let p of prediction) {
             if (p.probability > best.probability) {
@@ -173,97 +178,221 @@ async function predictLoop() {
             }
         }
 
-        const confidence = best.probability;
         const detectedClass = best.className;
+        const confidence = best.probability;
 
-        // Update confidence display
-        document.getElementById("confidence").innerText =
-            (confidence * 100).toFixed(1) + "%";
+        // Update detection display
+        const detectedToolEl = document.getElementById("detectedTool");
+        if (detectedToolEl) {
+            detectedToolEl.innerText = 
+                TOOLS.includes(detectedClass) ? `Tool ${detectedClass}` : "Show a tool...";
+        }
 
-        console.log("Detected:", detectedClass, "at", (confidence * 100).toFixed(1) + "%");
-
-        // Check if we have config for this class AND confidence is high enough
-        if (toolConfig.hasOwnProperty(detectedClass) && confidence >= CONFIDENCE_THRESHOLD) {
-            
-            // Handle "no tool" case
-            if (detectedClass === "00-no") {
-                document.getElementById("toolName").innerText = "No tool detected";
-                document.getElementById("mouthDiagram").style.display = "none";
-                document.getElementById("lowConfidenceWarning").innerText = "";
-            } else {
-                // Show tool information
-                document.getElementById("toolName").innerText = toolConfig[detectedClass].toolName;
-
-                const img = document.getElementById("mouthDiagram");
-                img.src = toolConfig[detectedClass].diagram;
-                img.style.display = "block";
-
-                document.getElementById("lowConfidenceWarning").innerText = "";
-                
-                showStatus("✓ " + toolConfig[detectedClass].toolName + " detected!");
+        // Only process tool detections when waiting for answer
+        if (awaitingAnswer) {
+            if (detectedToolEl) {
+                detectedToolEl.innerText = "Select an answer below";
+            }
+            updateStabilityBar(0);
+        } else if (TOOLS.includes(detectedClass) && confidence >= CONFIDENCE_THRESHOLD) {
+            // Add to buffer
+            detectionBuffer.push(detectedClass);
+            if (detectionBuffer.length > BUFFER_SIZE) {
+                detectionBuffer.shift();
             }
 
+            // Check if buffer is stable
+            const mostCommon = detectionBuffer.reduce((acc, val) => {
+                acc[val] = (acc[val] || 0) + 1;
+                return acc;
+            }, {});
+
+            const stableDetection = Object.keys(mostCommon).find(
+                tool => mostCommon[tool] >= BUFFER_SIZE * 0.8
+            );
+
+            if (stableDetection) {
+                updateStabilityBar(1);
+                // Stable detection achieved!
+                currentTool = stableDetection;
+                showDiagramOptions(stableDetection);
+            } else {
+                updateStabilityBar(detectionBuffer.length / BUFFER_SIZE);
+            }
         } else {
-            // Low confidence or unknown class
-            document.getElementById("toolName").innerText = detectedClass || "Uncertain";
-            document.getElementById("mouthDiagram").style.display = "none";
-            
-            if (confidence < CONFIDENCE_THRESHOLD) {
-                document.getElementById("lowConfidenceWarning").innerText =
-                    "Low confidence - adjust tool position and lighting";
-            } else {
-                document.getElementById("lowConfidenceWarning").innerText =
-                    "Unknown class: " + detectedClass;
-            }
+            // Reset buffer if detection lost
+            detectionBuffer = [];
+            updateStabilityBar(0);
         }
 
     } catch (err) {
         console.error("Prediction error:", err);
-        showStatus("Prediction error: " + err.message, true);
     }
 
     setTimeout(() => requestAnimationFrame(predictLoop), 150);
 }
 
-// Button click handler
-document.addEventListener('DOMContentLoaded', function() {
-    console.log("DOM ready");
+// Show diagram options for selection
+function showDiagramOptions(tool) {
+    awaitingAnswer = true;
+    correctAnswer = tool;
+    detectionBuffer = [];
+
+    const optionsContainer = document.getElementById("diagramOptions");
+    optionsContainer.innerHTML = "";
+
+    const numOptions = DIFFICULTY_SETTINGS[currentDifficulty].options;
     
-    const button = document.getElementById("startButton");
+    // Get wrong options
+    let options = [tool];
+    const otherTools = TOOLS.filter(t => t !== tool);
     
-    if (!button) {
-        console.error("Start button not found!");
-        return;
+    while (options.length < numOptions) {
+        const randomTool = otherTools[Math.floor(Math.random() * otherTools.length)];
+        if (!options.includes(randomTool)) {
+            options.push(randomTool);
+        }
     }
 
-    button.addEventListener("click", async () => {
-        console.log("Button clicked!");
+    // Shuffle options
+    options.sort(() => Math.random() - 0.5);
+
+    // Create diagram buttons
+    options.forEach(optionTool => {
+        const btn = document.createElement("div");
+        btn.className = "diagramOption";
         
-        if (isRunning) {
-            console.log("Already running");
-            return;
-        }
-
-        button.disabled = true;
-        button.innerText = "Starting...";
+        const img = document.createElement("img");
+        img.src = `./mouth-diagrams/${optionTool}.png`;
+        img.alt = `Tool ${optionTool}`;
         
-        try {
-            await loadModel();
-            await startCamera();
+        btn.appendChild(img);
+        btn.onclick = () => checkAnswer(optionTool);
+        
+        optionsContainer.appendChild(btn);
+    });
 
-            isRunning = true;
-            button.innerText = "Camera Running ✓";
-            button.style.backgroundColor = "#4CAF50";
-            predictLoop();
+    const instructionEl = document.getElementById("instruction");
+    if (instructionEl) {
+        instructionEl.innerText = `Tool ${tool} detected! Select the correct usage diagram:`;
+    }
+}
 
-        } catch (err) {
-            console.error("Startup error:", err);
-            showStatus("Error: " + err.message, true);
-            alert("Failed to start: " + err.message);
-            
-            button.disabled = false;
-            button.innerText = "Start Camera";
-            button.style.backgroundColor = "";
-        }
+// Check answer
+function checkAnswer(selectedTool) {
+    if (!awaitingAnswer) return;
+
+    const feedback = document.getElementById("feedback");
+    const isCorrect = selectedTool === correctAnswer;
+
+    if (isCorrect) {
+        // Correct answer
+        score += 10;
+        streak++;
+        
+        feedback.innerHTML = `
+            <div class="feedbackCorrect">
+                ✓ Correct! +10 points
+            </div>
+        `;
+        
+        playCorrectSound();
+
+        // Highlight correct answer
+        document.querySelectorAll(".diagramOption").forEach(opt => {
+            const img = opt.querySelector("img");
+            if (img.src.includes(correctAnswer)) {
+                opt.classList.add("correct");
+            }
+        });
+
+    } else {
+        // Wrong answer
+        score = Math.max(0, score - 5);
+        streak = 0;
+        
+        feedback.innerHTML = `
+            <div class="feedbackWrong">
+                ✗ Wrong! -5 points<br>
+                Correct answer: Tool ${correctAnswer}
+            </div>
+        `;
+        
+        playWrongSound();
+
+        // Highlight correct and wrong answers
+        document.querySelectorAll(".diagramOption").forEach(opt => {
+            const img = opt.querySelector("img");
+            if (img.src.includes(correctAnswer)) {
+                opt.classList.add("correct");
+            } else if (img.src.includes(selectedTool)) {
+                opt.classList.add("wrong");
+            }
+        });
+    }
+
+    // Update score display
+    document.getElementById("score").innerText = score;
+    document.getElementById("streak").innerText = streak;
+
+    // Reset after 2 seconds
+    setTimeout(resetRound, 2000);
+}
+
+// Reset for next round
+function resetRound() {
+    awaitingAnswer = false;
+    currentTool = null;
+    correctAnswer = null;
+    
+    document.getElementById("diagramOptions").innerHTML = "";
+    document.getElementById("feedback").innerHTML = "";
+    
+    const instructionEl = document.getElementById("instruction");
+    if (instructionEl) {
+        instructionEl.innerText = "Present a dental tool to the camera";
+    }
+    updateStabilityBar(0);
+}
+
+// Start game with selected difficulty
+async function startGame(difficulty) {
+    console.log("Starting game with difficulty:", difficulty);
+    currentDifficulty = difficulty;
+    
+    document.getElementById("difficultyScreen").style.display = "none";
+    document.getElementById("gameScreen").style.display = "block";
+    
+    showStatus("Starting game...");
+    
+    try {
+        await loadModel();
+        await startCamera();
+        
+        isRunning = true;
+        showStatus("Game started! Show a tool to the camera");
+        predictLoop();
+        
+    } catch (err) {
+        console.error("Game start error:", err);
+        showStatus("Error: " + err.message, true);
+        alert("Failed to start: " + err.message);
+    }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("DOM ready - DTR-edu");
+    
+    // Difficulty button handlers
+    const buttons = document.querySelectorAll(".difficultyBtn");
+    console.log("Found", buttons.length, "difficulty buttons");
+    
+    buttons.forEach(btn => {
+        btn.addEventListener("click", function() {
+            const level = this.getAttribute("data-level");
+            console.log("Button clicked, level:", level);
+            startGame(level);
+        });
     });
 });
